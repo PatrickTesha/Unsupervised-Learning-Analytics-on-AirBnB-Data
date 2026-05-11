@@ -163,6 +163,8 @@ ggplot(clean_data, aes(x = Longitude, y = Latitude)) +
     subtitle = "Standardized Labels for Cape Town Clusters",
     color = "Price per Night"
   )
+
+clean_data_copy <- clean_data
 ```
 
 \section{Part Two}
@@ -172,6 +174,11 @@ ggplot(clean_data, aes(x = Longitude, y = Latitude)) +
 ```
 
 
+\section{Part Three}
+
+```{r message=FALSE, warning=FALSE}
+
+```
 
 
 
