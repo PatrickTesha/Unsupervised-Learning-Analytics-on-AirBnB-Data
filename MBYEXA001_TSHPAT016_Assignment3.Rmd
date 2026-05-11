@@ -1,0 +1,235 @@
+---
+title: "MBYEXA001_TSHPAT016_Assignment3"
+author: "Exauce Mbuyi"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+library(viridis)
+library(scales)
+library(tidyverse)
+library(GGally)
+library(kableExtra)
+library(knitr)
+load("airbnbListings.RData")
+```
+
+\section{Data Wrangling & Part One}
+
+```{r message=FALSE, warning=FALSE}
+# First remove all missing valued objects:
+clean_data <- na.omit(Airbnb_Excel_Lab_AAMB_Co)
+
+# Variable renaming:
+clean_data <- clean_data %>% 
+  rename(
+    ward_level = Neighbourhood_Cleansed,
+    property_type = `Property_Type_Proper & Trim`,
+    host_name = `Host_Name_Trimmed & Proper`,
+    room_type = `Room_Type_Proper & Trim`,
+    neighbourhood = `Neighbourhood_Proper & Trim`
+         )
+
+# Checking for variables with no variability in them:
+length(unique(clean_data$room_type))
+length(unique(clean_data$property_type))
+length(unique(clean_data$host_name))
+length(unique(clean_data$neighbourhood))
+
+# Performing PCA for dimension reduction:
+numeric_cols <- sapply(clean_data, is.numeric)
+numeric_data <- clean_data[, numeric_cols] # Taking only the numerical variables
+
+PCA_results <- prcomp(numeric_data, center = T, scale. = T)
+
+# Scree plot:
+plot(PCA_results, type = 'l', main = "Scree Plot") 
+
+# Obtain first 5 loading vectors:
+loadings_mat <- PCA_results$rotation[ , 1:4]
+
+# Creating new variables:
+availability <- PCA_results$x[ , 1]
+review_score <- PCA_results$x[ , 2]
+listing_size <- PCA_results$x[ , 3]
+num_of_reviews <- PCA_results$x[ , 4]
+#identifier <- PCA_results$x[ , 5]
+
+# scatter plot matrix:
+pairs(PCA_results$x[, 1:4], 
+      col = rgb(0, 0, 0, 0.2),
+      pch = 16, 
+      main = "Scatterplot Matrix of Top 4 PCs")
+
+# EDA for Ward variable:
+PC_Summary <- data.frame(
+  PCA_results$x[ , 1:4],
+  Ward = clean_data$ward_level
+)
+
+Ward_averages <- PC_Summary %>% 
+  group_by(Ward) %>% 
+  summarise(across(starts_with("PC"), mean, .names = "avg_col{.col}"))
+
+# EDA for the room type:
+PC_Summary$RoomType <- clean_data$room_type
+
+ggpairs(PC_Summary, 
+        columns = 1:4, 
+        aes(color = RoomType, alpha = 0.4)) +
+  theme_minimal()
+
+# EDA for property type:
+clean_data <- clean_data %>%
+  mutate(property_category = case_when(
+    grepl("^entire", tolower(property_type))  ~ "Entire Unit",
+    grepl("^private", tolower(property_type)) ~ "Private Room",
+    TRUE                                      ~ "Others"
+  ))
+
+PC_Summary$property_category <- clean_data$property_category
+
+# EDA for property category themes:
+eda_theme_df <- data.frame(
+  availability   = availability,
+  review_score   = review_score,
+  listing_size   = listing_size,
+  num_of_reviews = num_of_reviews,
+  property_category = clean_data$property_category
+)
+
+eda_theme_long <- eda_theme_df %>%
+  pivot_longer(
+    cols = -property_category, 
+    names_to = "Theme", 
+    values_to = "Score"
+  )
+
+# Generate the faceted boxplot with constrained Y-axis
+ggplot(eda_theme_long, aes(x = property_category, y = Score, fill = property_category)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.7) + 
+  facet_wrap(~Theme, scales = "free_y") +
+  coord_cartesian(ylim = c(-5, 5)) + # This sets the view to [-1, 1]
+  theme_minimal() +
+  labs(
+    title = "Airbnb Theme Distributions by Property Category",
+    subtitle = "Analysis of Principal Component Scores (Focus Range)",
+    y = "PC Score (Standard Deviations)", 
+    x = "Category",
+    fill = "Property Type"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+
+# EDA on the host_name variable:
+host_freq_table <- clean_data %>%
+  count(host_name, sort = TRUE) %>%
+  mutate(
+    relative_freq = n / sum(n),
+    percentage = relative_freq * 100
+  )
+
+head(host_freq_table, 10)
+
+# EDA on Neighbourhood:
+luxury_labels <- clean_data %>%
+  group_by(neighbourhood) %>%
+  summarise(
+    lat = mean(Latitude),
+    long = mean(Longitude),
+    avg_price = mean(Price)
+  ) %>%
+  filter(avg_price > 1000) %>%
+
+  mutate(short_name = gsub(",.*", "", neighbourhood))
+
+
+ggplot(clean_data, aes(x = Longitude, y = Latitude)) +
+  geom_point(aes(color = Price), alpha = 0.4, size = 0.8) + 
+  scale_color_viridis(option = "magma", trans = "log10", 
+                      labels = scales::dollar_format(prefix = "R")) +
+  geom_text(data = luxury_labels, 
+            aes(x = long, y = lat, label = short_name), # Using short_name
+            size = 3, 
+            check_overlap = TRUE, 
+            fontface = "bold",
+            color = "black",
+            vjust = -0.5) + 
+  theme_minimal() +
+
+  coord_cartesian(xlim = c(18.2, 19.1), ylim = c(-34.3, -33.5)) +
+  labs(
+    title = "Luxury Airbnb Hubs (Avg > R1,000)",
+    subtitle = "Standardized Labels for Cape Town Clusters",
+    color = "Price per Night"
+  )
+```
+
+\section{Part Two}
+
+```{r message=FALSE, warning=FALSE}
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
