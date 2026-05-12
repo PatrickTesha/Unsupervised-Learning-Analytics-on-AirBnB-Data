@@ -6,6 +6,15 @@ output: pdf_document
 ---
 
 ```{r message=FALSE, warning=FALSE, include=FALSE}
+library(clue)
+library(fpc)
+library(patchwork)
+library(mclust)
+library(cluster)
+library(factoextra)
+library(kohonen)
+library(colorspace)
+library(readr)
 library(viridis)
 library(scales)
 library(tidyverse)
@@ -43,29 +52,54 @@ numeric_data <- clean_data[, numeric_cols] # Taking only the numerical variables
 
 PCA_results <- prcomp(numeric_data, center = T, scale. = T)
 
-# Scree plot:
+  # Scree plot:
 plot(PCA_results, type = 'l', main = "Scree Plot") 
 
-# Obtain first 5 loading vectors:
+  # Obtain first 4 loading vectors:
 loadings_mat <- PCA_results$rotation[ , 1:4]
 
-# Creating new variables:
-availability <- PCA_results$x[ , 1]
-review_score <- PCA_results$x[ , 2]
-listing_size <- PCA_results$x[ , 3]
-num_of_reviews <- PCA_results$x[ , 4]
-#identifier <- PCA_results$x[ , 5]
-
-# scatter plot matrix:
+  # scatter plot matrix:
 pairs(PCA_results$x[, 1:4], 
       col = rgb(0, 0, 0, 0.2),
       pch = 16, 
       main = "Scatterplot Matrix of Top 4 PCs")
 
+# REMOVING OUTLIERS:
+
+PC_scores <- PCA_results$x[, 1:4]
+centroid <- colMeans(PC_scores)
+cov_matrix <- cov(PC_scores)
+
+mahal_dist <- mahalanobis(PC_scores, centroid, cov_matrix)
+
+threshold <- qchisq(0.95, df = 4)
+outlier_indices <- which(mahal_dist > threshold)
+
+clean_data_no_outliers <- clean_data[-outlier_indices, ]
+numeric_data_no_outliers <- numeric_data[-outlier_indices, ]
+
+cat("Removed", length(outlier_indices), "outliers\n")
+
+  # Create a new PCA outlier-free object
+PCA_results_clean <- prcomp(numeric_data_no_outliers, center = T, scale. = T)
+
+  # Creating new variables:
+availability <- PCA_results_clean$x[ , 1]
+review_score <- PCA_results_clean$x[ , 2]
+listing_size <- PCA_results_clean$x[ , 3]
+num_of_reviews <- PCA_results_clean$x[ , 4]
+#identifier <- PCA_results_clean$x[ , 5]
+
+  # Plot the outlier free scatter plot matrix:
+par(mfrow = c(1, 2))
+pairs(PCA_results$x[, 1:4], col = rgb(0, 0, 0, 0.2), pch = 16, main = "Original")
+pairs(PCA_results_clean$x[, 1:4], col = rgb(0, 0, 0, 0.2), pch = 16, main = "Cleaned")
+par(mfrow = c(1, 1))
+
 # EDA for Ward variable:
 PC_Summary <- data.frame(
-  PCA_results$x[ , 1:4],
-  Ward = clean_data$ward_level
+  PCA_results_clean$x[ , 1:4],
+  Ward = clean_data_no_outliers$ward_level
 )
 
 Ward_averages <- PC_Summary %>% 
@@ -73,7 +107,7 @@ Ward_averages <- PC_Summary %>%
   summarise(across(starts_with("PC"), mean, .names = "avg_col{.col}"))
 
 # EDA for the room type:
-PC_Summary$RoomType <- clean_data$room_type
+PC_Summary$RoomType <- clean_data_no_outliers$room_type
 
 ggpairs(PC_Summary, 
         columns = 1:4, 
@@ -81,14 +115,14 @@ ggpairs(PC_Summary,
   theme_minimal()
 
 # EDA for property type:
-clean_data <- clean_data %>%
+clean_data_no_outliers <- clean_data_no_outliers %>%
   mutate(property_category = case_when(
     grepl("^entire", tolower(property_type))  ~ "Entire Unit",
     grepl("^private", tolower(property_type)) ~ "Private Room",
     TRUE                                      ~ "Others"
   ))
 
-PC_Summary$property_category <- clean_data$property_category
+PC_Summary$property_category <- clean_data_no_outliers$property_category
 
 # EDA for property category themes:
 eda_theme_df <- data.frame(
@@ -96,7 +130,7 @@ eda_theme_df <- data.frame(
   review_score   = review_score,
   listing_size   = listing_size,
   num_of_reviews = num_of_reviews,
-  property_category = clean_data$property_category
+  property_category = clean_data_no_outliers$property_category
 )
 
 eda_theme_long <- eda_theme_df %>%
@@ -122,7 +156,7 @@ ggplot(eda_theme_long, aes(x = property_category, y = Score, fill = property_cat
   theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
 
 # EDA on the host_name variable:
-host_freq_table <- clean_data %>%
+host_freq_table <- clean_data_no_outliers %>%
   count(host_name, sort = TRUE) %>%
   mutate(
     relative_freq = n / sum(n),
@@ -132,7 +166,7 @@ host_freq_table <- clean_data %>%
 head(host_freq_table, 10)
 
 # EDA on Neighbourhood:
-luxury_labels <- clean_data %>%
+luxury_labels <- clean_data_no_outliers %>%
   group_by(neighbourhood) %>%
   summarise(
     lat = mean(Latitude),
@@ -144,7 +178,7 @@ luxury_labels <- clean_data %>%
   mutate(short_name = gsub(",.*", "", neighbourhood))
 
 
-ggplot(clean_data, aes(x = Longitude, y = Latitude)) +
+ggplot(clean_data_no_outliers, aes(x = Longitude, y = Latitude)) +
   geom_point(aes(color = Price), alpha = 0.4, size = 0.8) + 
   scale_color_viridis(option = "magma", trans = "log10", 
                       labels = scales::dollar_format(prefix = "R")) +
@@ -163,21 +197,198 @@ ggplot(clean_data, aes(x = Longitude, y = Latitude)) +
     subtitle = "Standardized Labels for Cape Town Clusters",
     color = "Price per Night"
   )
-
-clean_data_copy <- clean_data
 ```
 
 \section{Part Two}
 
 ```{r message=FALSE, warning=FALSE}
+# Obtaining the variables for the clustering:
+selected_variables <- c(18:29,33:39,13:17,30:32,40)
+data_clust <- clean_data_no_outliers %>%
+  select(selected_variables)
 
+# Scale the data:
+data_scaled <- scale(data_clust)
+
+set.seed(123)
+
+wss_full <- numeric(40)
+wss_full[1] <- (nrow(data_scaled) - 1) * sum(apply(data_scaled, 2, var))
+
+for (i in 2:40) {
+  wss_full[i] <- sum(kmeans(data_scaled, centers = i, nstart = 20)$withinss)
+}
+
+plot(1:40, wss_full, type = "b", pch = 19, 
+     xlab = "Number of Clusters", 
+     ylab = "WSS",
+     main = "Elbow Method: Cleaned Dataset (10,263 obs)")
+
+data_sample <- data_scaled[sample(1:nrow(data_scaled), 2000), ]
+
+gap_stat <- clusGap(data_sample, 
+                    FUN = kmeans, 
+                    nstart = 25, 
+                    K.max = 15, 
+                    B = 50) 
+
+print(gap_stat, method = "firstmax") # Choose k = 6
+
+plot(gap_stat, main = "Gap Statistic for Cape Town Airbnb Listings")
+
+  # Compare the silhouette score of k=6 and k=7:
+km6 <- kmeans(data_scaled, centers = 6, nstart = 25)
+km7 <- kmeans(data_scaled, centers = 7, nstart = 25)
+
+sil6 <- silhouette(km6$cluster, dist(data_scaled))
+sil7 <- silhouette(km7$cluster, dist(data_scaled))
+
+print(paste("Average Silhouette Width for k=6:", mean(sil6[,3])))
+print(paste("Average Silhouette Width for k=7:", mean(sil7[,3])))
+
+# Plotting the final K-Means clustering:
+final_km_6 <- kmeans(data_scaled, centers = 6, nstart = 25)
+
+base_plot_fixed <- function(pc_indices) {
+  fviz_cluster(final_km_6,             
+               data = PCA_results_clean$x, 
+               choose.vars = pc_indices,
+               geom = "point",
+               ellipse = FALSE,
+               show.clust.cent = TRUE,
+               palette = "jco",
+               ggtheme = theme_minimal()) +
+    labs(x = paste0("PC", pc_indices[1]), 
+         y = paste0("PC", pc_indices[2])) +
+    theme(legend.position = "none",
+          plot.title = element_text(size = 10))
+}
+
+p1 <- base_plot_fixed(c(1, 2)) + labs(title = "PC1 vs PC2: Market Overview")
+p2 <- base_plot_fixed(c(1, 3)) + labs(title = "PC1 vs PC3: Availability & Size")
+p3 <- base_plot_fixed(c(2, 3)) + labs(title = "PC2 vs PC3: Quality & Size")
+p4 <- base_plot_fixed(c(3, 4)) + labs(title = "PC3 vs PC4: The Specifics")
+
+(p1 + p2) / (p3 + p4) + 
+  plot_annotation(title = "K-Means Cluster Projection (k=6)",
+                  subtitle = "Visualized across Cleaned Principal Components",
+                  theme = theme(plot.title = element_text(size = 14, face = "bold")))
+
+# Performing Cluster Stability checks:
+  
+  ## Resampling or bootstrap stability:
+boot_stability <- clusterboot(data_scaled, 
+                              B = 100, 
+                              bootmethod = "boot",
+                              clustermethod = kmeansCBI, 
+                              krange = 6, 
+                              seed = 123)
+jaccard_stability <- boot_stability$bootmean
+print("Jaccard Similarity (Bootstrap Mean):")
+print(jaccard_stability)
+
+# Random initialisations:
+set.seed(1)
+km_run1 <- kmeans(data_scaled, centers = 6, nstart = 1)
+
+set.seed(2)
+km_run2 <- kmeans(data_scaled, centers = 6, nstart = 1)
+
+  # Using the ARI as a comparison metric:
+ari_value <- adjustedRandIndex(km_run1$cluster, km_run2$cluster)
+print(paste("ARI between random starts:", round(ari_value, 4)))
+
+  # Using the Jaccard as the comparison metric:
+jaccard_random <- cl_agreement(as.cl_partition(km_run1$cluster), 
+                               as.cl_partition(km_run2$cluster), 
+                               method = "Jaccard")
+print(paste("Jaccard Similarity between random starts:", round(jaccard_random, 4)))
 ```
 
 
 \section{Part Three}
 
 ```{r message=FALSE, warning=FALSE}
+set.seed(123)
 
+som_grid <- somgrid(xdim = 22, ydim=22, topo="hexagonal")
+data_mat <- as.matrix(data_scaled)
+SOM_model <- som(data_mat,grid=som_grid, rlen=1000, 
+                 alpha=c(0.05,0.01), 
+                 keep.data = TRUE  )
+SOM_ModelCodes = som_model$codes[[1]]
+
+# Training Process
+plot(SOM_model,type="changes")
+
+# Node Counts - Number of Observations in Each Node
+plot(SOM_model, type="counts")
+
+# U-Matrix
+plot(SOM_model, type="dist.neighbours")
+
+# Quantization Error
+plot(SOM_model,type="quality")
+plot(SOM_model,type="mapping")
+
+# Individual Plots for Variables
+plot(SOM_model, type="codes", palette.name = rainbow)
+
+# Heat Maps:
+plot_som_heatmap <- function(model, variable_data, title_name) {
+  node_means <- aggregate(as.numeric(variable_data), 
+                          by = list(model$unit.classif), 
+                          FUN = mean, 
+                          na.rm = TRUE)
+  
+  plot(model, 
+       type = "property", 
+       property = node_means[, 2], 
+       main = title_name, 
+       palette.name = viridis, 
+       border = "grey")
+}
+
+par(mfrow = c(2, 2)) 
+
+plot_som_heatmap(SOM_model, PCA_results_clean$x[,1], "Theme 1: Availability")
+plot_som_heatmap(SOM_model, PCA_results_clean$x[,2], "Theme 2: Review Score")
+plot_som_heatmap(SOM_model, PCA_results_clean$x[,3], "Theme 3: Listing Size")
+plot_som_heatmap(SOM_model, PCA_results_clean$x[,4], "Theme 4: Num of Reviews")
+
+par(mfrow = c(1, 1))
+
+# Performing k-means on SOM:
+
+som_codes <- SOM_model$codes[[1]]
+
+gap_stat_som <- clusGap(som_codes, 
+                        FUN = kmeans, 
+                        nstart = 25, 
+                        K.max = 15, 
+                        B = 50)
+
+best_k_som <- with(gap_stat_som, maxSE(Tab[, "gap"], Tab[, "SE.sim"], method = "firstmax"))
+
+print(paste("The optimal number of clusters for the SOM grid is:", best_k_som))
+
+fviz_gap_stat(gap_stat_som) + 
+  labs(title = "Gap Statistic: Finding Optimal k for SOM Nodes")
+
+som_cluster_results <- kmeans(som_codes, centers = best_k_som, nstart = 25)
+
+final_cluster_assignment <- som_cluster_results$cluster[SOM_model$unit.classif]
+clean_data_no_outliers$Market_Segment <- as.factor(final_cluster_assignment)
+
+  # Plot the results:
+plot(SOM_model, 
+     type = "mapping", 
+     pchs = "", 
+     bgcol = viridis(best_k_som, alpha = 0.5)[som_cluster_results$cluster], 
+     main = paste("Cape Town Market Segments (k =", best_k_som, ") on SOM Grid"),
+     border = "grey80")
+
+add.cluster.boundaries(SOM_model, som_cluster_results$cluster, lwd = 3)
 ```
 
 
