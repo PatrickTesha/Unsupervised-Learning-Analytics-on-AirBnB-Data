@@ -362,25 +362,33 @@ par(mfrow = c(1, 1))
 
 som_codes <- SOM_model$codes[[1]]
 
+# PERFORMING GAP STATISTIC:
 gap_stat_som <- clusGap(som_codes, 
                         FUN = kmeans, 
                         nstart = 25, 
                         K.max = 15, 
                         B = 50)
 
-best_k_som <- with(gap_stat_som, maxSE(Tab[, "gap"], Tab[, "SE.sim"], method = "firstmax"))
-
-print(paste("The optimal number of clusters for the SOM grid is:", best_k_som))
-
 fviz_gap_stat(gap_stat_som) + 
-  labs(title = "Gap Statistic: Finding Optimal k for SOM Nodes")
+  geom_vline(xintercept = NULL) + 
+  labs(title = "Gap Statistic: Finding Optimal k for SOM Nodes",
+       subtitle = "Manual inspection of the elbow curve")
 
+# SILHOUETTE SCORE:
+fviz_nbclust(som_codes, kmeans, method = "silhouette", k.max = 15) +
+  labs(title = "Silhouette Analysis: SOM Code Vectors",
+       subtitle = "Determining cluster cohesion on the SOM grid")
+km_som_6 <- kmeans(som_codes, centers = 6, nstart = 25)
+km_som_13 <- kmeans(som_codes, centers = 13, nstart = 25)
+
+# RE-RUN K-MEANS WITH THE BEST K:
+best_k_som <- 6
 som_cluster_results <- kmeans(som_codes, centers = best_k_som, nstart = 25)
 
 final_cluster_assignment <- som_cluster_results$cluster[SOM_model$unit.classif]
 clean_data_no_outliers$Market_Segment <- as.factor(final_cluster_assignment)
 
-  # Plot the results:
+# Plot the Clusters:
 plot(SOM_model, 
      type = "mapping", 
      pchs = "", 
