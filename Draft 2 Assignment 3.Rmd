@@ -1,0 +1,179 @@
+---
+title: "Assignment 3 (Draft 2)"
+author: "Exauce Mbuyi"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+```{r message=FALSE, warning=FALSE, include=FALSE}
+library(psych)
+library(clue)
+library(fpc)
+library(patchwork)
+library(mclust)
+library(cluster)
+library(factoextra)
+library(kohonen)
+library(colorspace)
+library(readr)
+library(viridis)
+library(scales)
+library(tidyverse)
+library(GGally)
+library(kableExtra)
+library(knitr)
+library(corrplot)
+load("airbnbListings.RData")
+```
+
+\section{Part One:}
+
+```{r message=FALSE, warning=FALSE}
+raw_data <- na.omit(Airbnb_Excel_Lab_AAMB_Co)
+numeric_cols <- sapply(raw_data, is.numeric)
+numeric_data <- raw_data[, numeric_cols]
+data_scaled <- scale(numeric_data)
+
+res <- cor(data_scaled, use = "complete.obs")
+
+corrplot(res, 
+         method = "color", 
+         order = "hclust",    
+         addrect = 4,            
+         tl.cex = 0.6,           
+         tl.col = "black",
+         cl.cex = 0.7,
+         main = "Clustered Correlation Heatmap")
+
+data_scaled_df <- as.data.frame(data_scaled)
+
+clean_data <- as.data.frame(data_scaled) %>%
+  select(-any_of(c(
+    "Availability_30", "Availability_60", "Availability_90", "Availability_365",
+    "Booked_30", "Booked_60", "Booked_365",
+    "Revenue_30", "Revenue_60", "Revenue_90",
+    "Host_Total_Listings_Count", "ID", "Host_ID",
+    "Beds", "Bedrooms",
+    "Number_of_reviews_ltm", "Number_of_reviews_l30d",
+    "Review_Scores_Rating",
+    "Latitude", "Longitude"
+  ))) %>%
+  na.omit() %>%
+  as.matrix()
+
+clean_data <- na.omit(clean_data)
+kmo_results <- KMO(clean_data)
+
+# APPLYING FACTOR ANALYSIS:
+fa.parallel(clean_data, n.iter = 100, main = "Scree Plot with Parallel Analysis")
+
+fa_final <- fa(clean_data, 
+               nfactors = 3, 
+               rotate = "varimax", 
+               fm = "pa")
+
+print(fa_final$loadings, cutoff = 0.3)
+
+# OBTAINING THE DATA IN TERMS OF THE FACTOR SCORES:
+FA_data <- as.data.frame(fa_final$scores)
+FA_data <- FA_data %>%
+  rename(
+    Reputation = PA1,
+    Popularity = PA2,
+    Scale_Price = PA3
+  )
+
+# REMOVING THE OUTLIERS:
+dist <- mahalanobis(FA_data, colMeans(FA_data), cov(FA_data))
+cutoff <- qchisq(1 - 0.001, df = ncol(FA_data))
+
+FA_data <- FA_data[dist < cutoff, ]
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
