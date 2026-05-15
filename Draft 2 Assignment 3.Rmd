@@ -28,9 +28,14 @@ load("airbnbListings.RData")
 \section{Part One:}
 
 ```{r message=FALSE, warning=FALSE}
-raw_data <- na.omit(Airbnb_Excel_Lab_AAMB_Co)
-numeric_cols <- sapply(raw_data, is.numeric)
-numeric_data <- raw_data[, numeric_cols]
+raw_data <- Airbnb_Excel_Lab_AAMB_Co
+
+# Imputing all NA's:
+clean_raw_data <- raw_data %>%
+  mutate(across(where(is.numeric), ~replace_na(., median(., na.rm = TRUE))))
+
+numeric_cols <- sapply(clean_raw_data, is.numeric)
+numeric_data <- clean_raw_data[, numeric_cols]
 data_scaled <- scale(numeric_data)
 
 res <- cor(data_scaled, use = "complete.obs")
@@ -54,13 +59,21 @@ clean_data <- as.data.frame(data_scaled) %>%
     "Host_Total_Listings_Count", "ID", "Host_ID",
     "Beds", "Bedrooms",
     "Number_of_reviews_ltm", "Number_of_reviews_l30d",
-    "Review_Scores_Rating",
-    "Latitude", "Longitude"
+    "Review_Scores_Rating"
   ))) %>%
-  na.omit() %>%
   as.matrix()
 
-clean_data <- na.omit(clean_data)
+res2 <- cor(clean_data, use = "complete.obs")
+
+corrplot(res2, 
+         method = "color", 
+         order = "hclust",    
+         addrect = 4,            
+         tl.cex = 0.6,           
+         tl.col = "black",
+         cl.cex = 0.7,
+         main = "Clustered Correlation Heatmap")
+
 kmo_results <- KMO(clean_data)
 
 # APPLYING FACTOR ANALYSIS:
@@ -82,15 +95,54 @@ FA_data <- FA_data %>%
     Scale_Price = PA3
   )
 
-# REMOVING THE OUTLIERS:
-dist <- mahalanobis(FA_data, colMeans(FA_data), cov(FA_data))
-cutoff <- qchisq(1 - 0.001, df = ncol(FA_data))
+# OBTAINING THE FINAL DATA FOR CLUSTERING:
+char_vars <- clean_raw_data %>%
+  select(where(is.character))
 
-FA_data <- FA_data[dist < cutoff, ]
+extra_vars <- clean_raw_data %>%
+  select(Booked_90, Host_Listings_Count, Latitude, Longitude)
+
+final_data <- cbind(FA_data, char_vars, extra_vars)
+
+# REMOVING PERFECTLY CORRELATED VARIABLES AND UNNECESSARY VARIABLES:
+final_data <- final_data %>%
+  select(-any_of(c(
+    "Picture_URL", 
+    "Host_Name_Trimmed & Proper", 
+    "Neighbourhood_Proper & Trim"
+  )))
+
+final_data <- final_data[ , -6]
+
+# RENAMING VARIABLES:
+final_data <- final_data %>%
+  rename(
+    Ward_Level = Neighbourhood_Cleansed,
+    Property_Type = `Property_Type_Proper & Trim`
+  )
 ```
 
+\section{Part One:}
 
+```{r message=FALSE, warning=FALSE}
+# SCATTER PLOT MATRIX OF THE FACTORS:
+pairs.panels(FA_data, 
+             method = "pearson", 
+             hist.col = "#00AFBB",
+             density = TRUE,  
+             ellipses = TRUE,
+             lm = TRUE)
 
+# EDA ON WARD AVERAGES:
+ward_averages <- data.frame(
+  FA_data,
+  Ward = Airbnb_Excel_Lab_AAMB_Co$Neighbourhood_Cleansed
+)
+
+Ward_averages <- PC_Summary %>% 
+  group_by(Ward) %>% 
+  summarise(across(starts_with("PC"), mean, .names = "avg_col{.col}"))
+```
 
 
 
