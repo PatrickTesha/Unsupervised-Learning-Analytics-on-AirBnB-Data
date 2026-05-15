@@ -6,6 +6,7 @@ output: pdf_document
 ---
 ```{r message=FALSE, warning=FALSE, include=FALSE}
 library(psych)
+library(leaflet)
 library(clue)
 library(fpc)
 library(patchwork)
@@ -30,16 +31,28 @@ load("airbnbListings.RData")
 ```{r message=FALSE, warning=FALSE}
 raw_data <- Airbnb_Excel_Lab_AAMB_Co
 
-# Imputing all NA's:
+# CHECKING FOR WHETHER THERE ARE MISSING VALUES:
+Num_NAs <- sum(!complete.cases(raw_data)) # How many objects have NAs.
+Num_col_NAs <- colSums(is.na(raw_data)) # How many variables contain NAs.
+NA_Variables <- sort(Num_col_NAs[Num_col_NAs > 0], decreasing = T) # Which Vars.
+
+  # Creating a table of % num of NAs by variable:
+NAs_Table <- data.frame(Variable = names(Num_col_NAs), 
+                            Missing_Count = Num_col_NAs) %>%
+  filter(Missing_Count > 0) %>%
+  arrange(desc(Missing_Count))
+
+# IMPUTING THE NAs WITH MEDIAN (FOR CONTINUOUS VARIABLES):
 clean_raw_data <- raw_data %>%
   mutate(across(where(is.numeric), ~replace_na(., median(., na.rm = TRUE))))
 
+# OBTAINING THE NUMERIC VARIABLES FOR FA:
 numeric_cols <- sapply(clean_raw_data, is.numeric)
 numeric_data <- clean_raw_data[, numeric_cols]
 data_scaled <- scale(numeric_data)
 
+# PLOTTING CORRELATION MATRIX TO IDENTIFY PERFECT COLLINEARITY:
 res <- cor(data_scaled, use = "complete.obs")
-
 corrplot(res, 
          method = "color", 
          order = "hclust",    
@@ -49,8 +62,8 @@ corrplot(res,
          cl.cex = 0.7,
          main = "Clustered Correlation Heatmap")
 
+# REMOVING VARIABLES THAT ARE PERFECT LINEAR COMBOS OF ANOTHER VARIABLE:
 data_scaled_df <- as.data.frame(data_scaled)
-
 clean_data <- as.data.frame(data_scaled) %>%
   select(-any_of(c(
     "Availability_30", "Availability_60", "Availability_90", "Availability_365",
@@ -63,26 +76,16 @@ clean_data <- as.data.frame(data_scaled) %>%
   ))) %>%
   as.matrix()
 
-res2 <- cor(clean_data, use = "complete.obs")
-
-corrplot(res2, 
-         method = "color", 
-         order = "hclust",    
-         addrect = 4,            
-         tl.cex = 0.6,           
-         tl.col = "black",
-         cl.cex = 0.7,
-         main = "Clustered Correlation Heatmap")
-
+# CHECKING IF MATRIX IS SINGULAR:
 kmo_results <- KMO(clean_data)
 
 # APPLYING FACTOR ANALYSIS:
-fa.parallel(clean_data, n.iter = 100, main = "Scree Plot with Parallel Analysis")
+fa.parallel(clean_data, n.iter = 100, main = "Scree Plot with Parallel Analysis") # Checking how many factors there are.
 
 fa_final <- fa(clean_data, 
                nfactors = 3, 
                rotate = "varimax", 
-               fm = "pa")
+               fm = "pa") # Scree plot for FA.
 
 print(fa_final$loadings, cutoff = 0.3)
 
@@ -134,18 +137,220 @@ pairs.panels(FA_data,
              lm = TRUE)
 
 # EDA ON WARD AVERAGES:
-ward_averages <- data.frame(
-  FA_data,
-  Ward = Airbnb_Excel_Lab_AAMB_Co$Neighbourhood_Cleansed
-)
+Ward_Analysis <- final_data %>%
+  group_by(Ward_Level) %>%
+  summarise(
+    Avg_Reputation = mean(Reputation),
+    Avg_Popularity = mean(Popularity),
+    Avg_Scale_Price = mean(Scale_Price),
+    Listing_Count = n()
+  ) %>%
+  arrange(desc(Avg_Reputation))
 
-Ward_averages <- PC_Summary %>% 
-  group_by(Ward) %>% 
-  summarise(across(starts_with("PC"), mean, .names = "avg_col{.col}"))
+# EDA ON THE PROPERTY TYPE AND BOOKED_90:
+Popular_Property <- final_data %>%
+  group_by(Property_Type) %>%
+  summarise(
+    Avg_Booked_90 = mean(Booked_90),
+    Avg_Reputation = mean(Reputation),
+    Avg_Popularity = mean(Popularity),
+    Avg_Scale_Price = mean(Scale_Price),
+    Listing_Count = n()
+  ) %>%
+  arrange(desc(Listing_Count))
+
+# EDA ON LONGITUDE AND LATITUDE:
+  # Scale_Price:
+ggplot(final_data, aes(x = Longitude, y = Latitude, color = Scale_Price)) +
+  geom_point(alpha = 0.5, size = 0.8) +
+  scale_color_distiller(palette = "RdYlBu", direction = 1) +
+  coord_quickmap() +
+  theme_minimal() +
+  theme(
+    panel.background = element_rect(fill = "white", color = NA),
+    legend.position = "right"
+  ) +
+  labs(
+    title = "Spatial Distribution of Scale & Price Factor Scores",
+    subtitle = "Cape Town Airbnb Market Analysis",
+    x = "Longitude",
+    y = "Latitude",
+    color = "Scale Score"
+  )
+
+  # Reputation:
+ggplot(final_data, aes(x = Longitude, y = Latitude, color = Reputation)) +
+  geom_point(alpha = 0.5, size = 0.8) +
+  scale_color_distiller(palette = "RdYlBu", direction = 1) +
+  coord_quickmap() +
+  theme_minimal() +
+  theme(
+    panel.background = element_rect(fill = "white", color = NA),
+    legend.position = "right"
+  ) +
+  labs(
+    title = "Spatial Distribution of Reputation Factor Scores",
+    subtitle = "Cape Town Airbnb Market Analysis",
+    x = "Longitude",
+    y = "Latitude",
+    color = "Reputation"
+  )
+
+  # Popularity:
+ggplot(final_data, aes(x = Longitude, y = Latitude, color = Popularity)) +
+  geom_point(alpha = 0.5, size = 0.8) +
+  scale_color_distiller(palette = "RdYlBu", direction = 1) +
+  coord_quickmap() +
+  theme_minimal() +
+  theme(
+    panel.background = element_rect(fill = "white", color = NA),
+    legend.position = "right"
+  ) +
+  labs(
+    title = "Spatial Distribution of Popularity Factor Scores",
+    subtitle = "Cape Town Airbnb Market Analysis",
+    x = "Longitude",
+    y = "Latitude",
+    color = "Popularity"
+  )
 ```
 
+\section{Part Two:}
 
+```{r message=FALSE, warning=FALSE}
+clara_vars <- final_data %>%
+  select(Reputation, Popularity, Scale_Price) %>%
+  mutate(across(everything(), ~ {
+    x <- .x
+    x <- sign(x) * log1p(abs(x))
+    as.numeric(scale(x))
+  }))
 
+clara_fn <- function(x, k) {
+  clara(
+    x,
+    k        = k,
+    metric   = "manhattan",
+    samples  = 75,
+    sampsize = min(1500 + 2 * k, nrow(x)),
+    pamLike  = TRUE,
+    rngR     = TRUE
+  )
+}
+
+set.seed(123)
+p_wss <- fviz_nbclust(
+  clara_vars,
+  FUNcluster = clara_fn,
+  method     = "wss",
+  k.max      = 8,
+  verbose    = FALSE
+) +
+  labs(title = "Elbow method — WSS", subtitle = "CLARA · Manhattan distance") +
+  theme_minimal()
+
+set.seed(123)
+p_sil <- fviz_nbclust(
+  clara_vars,
+  FUNcluster = clara_fn,
+  method     = "silhouette",
+  k.max      = 8,
+  verbose    = FALSE
+) +
+  labs(title = "Silhouette method", subtitle = "CLARA · Manhattan distance") +
+  theme_minimal()
+
+set.seed(123)
+gap_result <- clusGap(
+  clara_vars,
+  FUNcluster = clara_fn,
+  K.max      = 8,
+  B          = 50,
+  verbose    = FALSE
+)
+
+p_gap <- fviz_gap_stat(
+  gap_result,
+  maxSE = list(method = "firstSEmax", SE.factor = 1)
+) +
+  labs(title = "Gap statistic", subtitle = "CLARA · Manhattan distance · B = 50") +
+  theme_minimal()
+
+print(p_wss)
+print(p_sil)
+print(p_gap)
+
+k_wss <- {
+  wss_vals <- p_wss$data$y
+  diffs    <- diff(wss_vals)
+  ratios   <- diffs[-length(diffs)] / diffs[-1]
+  which.max(ratios) + 1L
+}
+
+k_sil <- as.integer(
+  p_sil$data$clusters[which.max(p_sil$data$y)]
+)
+
+k_gap <- maxSE(
+  gap_result$Tab[, "gap"],
+  gap_result$Tab[, "SE.sim"],
+  method = "firstSEmax"
+)
+
+cat("k — Elbow (WSS):   ", k_wss, "\n")
+cat("k — Silhouette:    ", k_sil, "\n")
+cat("k — Gap statistic: ", k_gap, "\n")
+
+k_votes <- c(k_wss, k_sil, k_gap)
+k_final <- as.integer(
+  names(sort(table(k_votes), decreasing = TRUE))[1]
+)
+cat("k — Majority vote: ", k_final, "\n")
+
+set.seed(123)
+clara_final <- clara(
+  clara_vars,
+  k        = k_final,
+  metric   = "manhattan",
+  samples  = 100,
+  sampsize = min(1500 + 2 * k_final, nrow(clara_vars)),
+  pamLike  = TRUE,
+  rngR     = TRUE
+)
+
+final_data$cluster <- as.factor(clara_final$clustering)
+
+cluster_profiles <- final_data %>%
+  group_by(cluster) %>%
+  summarise(
+    n              = n(),
+    pct            = round(n() / nrow(final_data) * 100, 1),
+    Reputation_med = round(median(Reputation, na.rm = TRUE), 3),
+    Popularity_med = round(median(Popularity, na.rm = TRUE), 3),
+    Price_med      = round(median(Scale_Price, na.rm = TRUE), 3),
+    .groups        = "drop"
+  )
+
+print(cluster_profiles)
+
+medoid_idx      <- clara_final$i.med
+medoid_listings <- final_data[medoid_idx, ]
+print(medoid_listings)
+
+fviz_cluster(
+  clara_final,
+  data         = clara_vars,
+  geom         = "point",
+  ellipse.type = "convex",
+  palette      = "Set2",
+  ggtheme      = theme_minimal(),
+  main         = paste("CLARA —", k_final, "clusters (Manhattan)")
+)
+
+fviz_silhouette(clara_final) +
+  theme_minimal() +
+  labs(title = "Silhouette plot — CLARA final model")
+```
 
 
 
