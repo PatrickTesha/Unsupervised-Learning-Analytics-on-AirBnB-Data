@@ -123,6 +123,15 @@ final_data <- final_data %>%
     Ward_Level = Neighbourhood_Cleansed,
     Property_Type = `Property_Type_Proper & Trim`
   )
+
+# REMOVING OUTLIERS:
+FA_data <- final_data[ , 1:3]
+centroid <- colMeans(FA_data)
+cov_matrix <- cov(FA_data)
+mahal_dist <- mahalanobis(FA_data, centroid, cov_matrix)
+threshold <- qchisq(0.95, df = 3)
+outlier_indices <- which(mahal_dist > threshold)
+FA_data <- FA_data[-outlier_indices, ]
 ```
 
 \section{Part One:}
@@ -218,8 +227,7 @@ ggplot(final_data, aes(x = Longitude, y = Latitude, color = Popularity)) +
 \section{Part Two:}
 
 ```{r message=FALSE, warning=FALSE}
-clara_vars <- final_data %>%
-  select(Reputation, Popularity, Scale_Price) %>%
+clara_vars <- FA_data %>%
   mutate(across(everything(), ~ {
     x <- .x
     x <- sign(x) * log1p(abs(x))
