@@ -12,7 +12,6 @@ library(fpc)
 library(patchwork)
 library(mclust)
 library(cluster)
-library(factoextra)
 library(kohonen)
 library(colorspace)
 library(readr)
@@ -23,25 +22,50 @@ library(GGally)
 library(kableExtra)
 library(knitr)
 library(corrplot)
+library(dbscan)
+library(ggplot2)
+library(factoextra)
 load("airbnbListings.RData")
 ```
 
-\section{Part One:}
+\section{Introduction:}
 
-```{r message=FALSE, warning=FALSE}
+The Cape Town housing market boasts a large AirBnB market, as the city is a popular tourist attraction. Such a large AirBnB market means there is a wide range of listings in the market, from lavish high-end villas to small low-end boutique listings. The aim of the current project is to undertake an unsupervised learning approach, in order to study whether the are natural clusters of AirBnB listings in Cape Town, and attempt to profile these listings.
+
+The data set that will be used in this study is the $airbnbListings.RData$, which is which originally was generated from the (cpt_listings) data that is downloaded from Inside Airbnb website. The data contains 16 317 objects, with 40 features characterising the feature space.
+
+In this paper we will first study the data set at hand, by performing data wrangling, exploring the characteristics of the data, relationships between features and summary statistics of the data. We will then proceed to train various hierarchical and non-hierarchical clustering algorithms and select the best performing algorithm under each distance-based clustering methods mentioned above - using appropriate metrics for comparison -, and compare the results of the chosen models. The paper will also fit a self-organising mad (SOM), and compare the results to the best performing distance-based clustering algorithms mentioned above. 
+
+\section{Data Description and Data Wrangling}
+
+The $airbnbListings.RData$ is a large data set consisting 16 317 observations on 40 variables, with some of the observations having missing values for some features. In total, 5 358 observations had missing values for at least one feature. There were also 10 features which had missing values. Table 1 below represents a summary on the missing values.
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
 raw_data <- Airbnb_Excel_Lab_AAMB_Co
+class(Airbnb_Excel_Lab_AAMB_Co)
 
 # CHECKING FOR WHETHER THERE ARE MISSING VALUES:
 Num_NAs <- sum(!complete.cases(raw_data)) # How many objects have NAs.
 Num_col_NAs <- colSums(is.na(raw_data)) # How many variables contain NAs.
 NA_Variables <- sort(Num_col_NAs[Num_col_NAs > 0], decreasing = T) # Which Vars.
+total_rows <- nrow(raw_data)
 
-  # Creating a table of % num of NAs by variable:
-NAs_Table <- data.frame(Variable = names(Num_col_NAs), 
-                            Missing_Count = Num_col_NAs) %>%
+# Creating the table with the percentage column
+NAs_Table <- data.frame(
+    Variable = names(Num_col_NAs), 
+    Missing_Count = Num_col_NAs
+  ) %>%
   filter(Missing_Count > 0) %>%
+  mutate(Percentage = (Missing_Count / total_rows) * 100) %>% # Add the % column
   arrange(desc(Missing_Count))
 
+# Round the percentage:
+NAs_Table$Percentage <- round(NAs_Table$Percentage, 2)
+```
+
+Table 1 shows the number frequency and percentage frequency of the number of missing values per variable that contained a missing value. The variable 'Neighbourhood_Proper & Trim' had the most missing values, with 32.75% of the rows in the column missing values. The missing values for each of the features will be imputed with the feature's median value, as the median is robust to outlier, unlike the mean value. However, since the 'Neighbourhood_Proper & Trim' feature is categorical, it does not contain a median value, hence this feature will be removed from the data set, leaving 39 features in the feature space.
+
+```{r message=FALSE, warning=FALSE}
 # IMPUTING THE NAs WITH MEDIAN (FOR CONTINUOUS VARIABLES):
 clean_raw_data <- raw_data %>%
   mutate(across(where(is.numeric), ~replace_na(., median(., na.rm = TRUE))))
@@ -50,7 +74,13 @@ clean_raw_data <- raw_data %>%
 numeric_cols <- sapply(clean_raw_data, is.numeric)
 numeric_data <- clean_raw_data[, numeric_cols]
 data_scaled <- scale(numeric_data)
+```
 
+\section{Exploratory Data Analysis}
+
+Before any clustering algorithms can be done, it is always important to analyze data set at hand, hence conducting exploratory data analysis. Figure 1 below is a plot of the clustered correlation plot.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
 # PLOTTING CORRELATION MATRIX TO IDENTIFY PERFECT COLLINEARITY:
 res <- cor(data_scaled, use = "complete.obs")
 corrplot(res, 
@@ -61,7 +91,17 @@ corrplot(res,
          tl.col = "black",
          cl.cex = 0.7,
          main = "Clustered Correlation Heatmap")
+```
 
+Figure 1 shows that some of the features can be grouped according to features that are highly correlated with each other. The correlated groups can be broadly named as 'availability', 'revenue', 'size', 'number of reviews', 'review score' and 'booked'. Figure 1 also shows that the 'booked' group of features is highly negatively correlated to the 'availability' feature group, which is intuitive as a listing that is booked will no longer be a available for the duration of the booking. The occurance of such feature groupings motivates conducting a factor analysis, as the reason the features within a group are correlated could be due to the fact that there is a latent variable (a factor), which explains the correlation between the features in the group.
+
+Before conducting factor analysis, the features which are perfect linear combinations are another feature, will be removed to prevent the design matrix from being singular. As, such 18 features were removed from the feature space, leaving only 21 features. Figure 2 above shows the clustered correlation matrix for the features which remain after removing the features which were perfect linear combinations of those that are left. All the availability features were removed as they carried exactly the same information as the booked features. Only the $booked$_$90$ feature was kept, as it carried more information than the other booked features. The same argument applies for explaining why only $Revenue$_$365$, $Number$_$of$_$Reviews$ and $Number$_$per$_$Month$ were kept, amongst the other features in the features groupings mentioned above.
+
+As a final check before conducting factor analysis we conduct the Kaiser-Meyer-Olkin (KMO) test, which is a measure of how suitable the data is for factor analysis. A KMO score of close to 1 indicates that the variables are highly correlated and carry a lot of information and factor analysis will likely yield very distinct factors. However, in contrast to this, a KMO score of close to 0 indicates that the features are not correlated at all and factor analysis cannot find any groupings of the variables. Our data set returned a KMO score of 0.81
+
+Since the features in the data set carry a lot of shred information, we conducted factor analysis, by firstly conducting a parallel analysis which determines the number of factors to select. Figure 2 below represents the results of the parallel analysis.
+
+```{r}
 # REMOVING VARIABLES THAT ARE PERFECT LINEAR COMBOS OF ANOTHER VARIABLE:
 data_scaled_df <- as.data.frame(data_scaled)
 clean_data <- as.data.frame(data_scaled) %>%
@@ -71,7 +111,7 @@ clean_data <- as.data.frame(data_scaled) %>%
     "Revenue_30", "Revenue_60", "Revenue_90",
     "Host_Total_Listings_Count", "ID", "Host_ID",
     "Beds", "Bedrooms",
-    "Number_of_reviews_ltm", "Number_of_reviews_l30d",
+    "Number_of_Reviews_ltm", "Number_of_Reviews_l30d",
     "Review_Scores_Rating"
   ))) %>%
   as.matrix()
@@ -81,14 +121,22 @@ kmo_results <- KMO(clean_data)
 
 # APPLYING FACTOR ANALYSIS:
 fa.parallel(clean_data, n.iter = 100, main = "Scree Plot with Parallel Analysis") # Checking how many factors there are.
+```
 
+Figure 2 shows that the best number of factors to select is 3 factors, as the elbow occurs at 3 factors. Beyond 3 factors the, extra factors would likely be explaining random noise rather than the true correlation between the features. Hence, we select 3 factors. Table 3 below represents the loadings of each of the 3 factors.
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
 fa_final <- fa(clean_data, 
                nfactors = 3, 
                rotate = "varimax", 
                fm = "pa") # Scree plot for FA.
 
 print(fa_final$loadings, cutoff = 0.3)
+```
 
+Table 3 shows the loadings of each feature by factor. Each factor contains distinct features, which means these factors are distinct values. Factor 1 can be labelled as the 'Reputation' factor, factor 2 can be labelled 'Popularity' and factor 3 as the  'Scale and Price' factor.
+
+```{r message=FALSE, warning=FALSE}
 # OBTAINING THE DATA IN TERMS OF THE FACTOR SCORES:
 FA_data <- as.data.frame(fa_final$scores)
 FA_data <- FA_data %>%
@@ -126,12 +174,14 @@ final_data <- final_data %>%
 
 # REMOVING OUTLIERS:
 FA_data <- final_data[ , 1:3]
+DB_data <- FA_data
 centroid <- colMeans(FA_data)
 cov_matrix <- cov(FA_data)
 mahal_dist <- mahalanobis(FA_data, centroid, cov_matrix)
 threshold <- qchisq(0.95, df = 3)
 outlier_indices <- which(mahal_dist > threshold)
 FA_data <- FA_data[-outlier_indices, ]
+cluster_data <- final_data[-outlier_indices, ]
 ```
 
 \section{Part One:}
@@ -170,7 +220,7 @@ Popular_Property <- final_data %>%
 
 # EDA ON LONGITUDE AND LATITUDE:
   # Scale_Price:
-ggplot(final_data, aes(x = Longitude, y = Latitude, color = Scale_Price)) +
+scale_price_plot <- ggplot(final_data, aes(x = Longitude, y = Latitude, color = Scale_Price)) +
   geom_point(alpha = 0.5, size = 0.8) +
   scale_color_distiller(palette = "RdYlBu", direction = 1) +
   coord_quickmap() +
@@ -188,7 +238,7 @@ ggplot(final_data, aes(x = Longitude, y = Latitude, color = Scale_Price)) +
   )
 
   # Reputation:
-ggplot(final_data, aes(x = Longitude, y = Latitude, color = Reputation)) +
+reputation_plot <- ggplot(final_data, aes(x = Longitude, y = Latitude, color = Reputation)) +
   geom_point(alpha = 0.5, size = 0.8) +
   scale_color_distiller(palette = "RdYlBu", direction = 1) +
   coord_quickmap() +
@@ -206,7 +256,7 @@ ggplot(final_data, aes(x = Longitude, y = Latitude, color = Reputation)) +
   )
 
   # Popularity:
-ggplot(final_data, aes(x = Longitude, y = Latitude, color = Popularity)) +
+popularity_plot <- ggplot(final_data, aes(x = Longitude, y = Latitude, color = Popularity)) +
   geom_point(alpha = 0.5, size = 0.8) +
   scale_color_distiller(palette = "RdYlBu", direction = 1) +
   coord_quickmap() +
@@ -222,10 +272,147 @@ ggplot(final_data, aes(x = Longitude, y = Latitude, color = Popularity)) +
     y = "Latitude",
     color = "Popularity"
   )
+
+# SAVING PLOTS AND TABLES:
+save(Ward_Analysis, Popular_Property, scale_price_plot, reputation_plot, popularity_plot, 
+     file = "EDA_Results_Workspace.RData")
 ```
 
 \section{Part Two:}
 
+\subsubsection{K-means}
+```{r diagnostics, cache=TRUE, message=FALSE, warning=FALSE}
+set.seed(123)
+
+wss_full <- numeric(15)
+wss_full[1] <- (nrow(FA_data) - 1) * sum(apply(FA_data, 2, var))
+
+for (i in 2:15) {
+  wss_full[i] <- sum(kmeans(FA_data, centers = i, nstart = 25)$withinss)
+}
+
+# ELBOW METHOD
+plot(1:15, wss_full, type = "b", pch = 19, 
+     xlab = "Number of Clusters", 
+     ylab = "WSS",
+     main = "Elbow Method")
+
+# GAP STATISTIC METHOD:
+data_sample <- data_scaled[sample(1:nrow(data_scaled), 2000), ]
+gap_stat <- clusGap(data_sample, 
+                    FUN = kmeans, 
+                    nstart = 25, 
+                    K.max = 15, 
+                    B = 50) 
+
+print(gap_stat, method = "firstmax") 
+plot(gap_stat, main = "Gap Statistic for Cape Town Airbnb Listings")
+
+# SILHOUETTE METHOD:
+set.seed(123)
+data_sample <- FA_data[sample(1:nrow(FA_data), 2000), ]
+sil_width <- numeric(15)
+for (i in 2:15) {
+  km_res <- kmeans(data_sample, centers = i, nstart = 25)
+  ss <- silhouette(km_res$cluster, dist(data_sample))
+  sil_width[i] <- mean(ss[, 3])
+}
+plot(1:15, sil_width, type = "b", pch = 19, frame = FALSE, 
+     xlab = "Number of clusters K",
+     ylab = "Average Silhouette Width",
+     main = "Silhouette Method for K-means")
+abline(v = which.max(sil_width), lty = 2, col = "red")
+cat("Optimal k suggested by Silhouette:", which.max(sil_width), "\n")
+
+# RUNNING THE FINAL MODEL:
+final_K_Means <- kmeans(FA_data, centers = 4, nstart = 25)
+fviz_cluster(final_K_Means, data = FA_data) #The plot of the clusters.
+
+# SAVING THE FINAL MODEL:
+save(final_K_Means, file = "final_K_Means_Model.RData")
+
+# SAVING THE FILES:
+save(wss_full, gap_stat, sil_width, file = "cluster_selection_results.RData")
+
+# LOADING THE FILES:
+load("cluster_selection_results.RData")
+
+# -------------------------------------------------------------
+# 1. SAVE ELBOW METHOD PLOT
+# -------------------------------------------------------------
+png("plot_elbow_method.png", width = 800, height = 600, res = 120)
+plot(1:15, wss_full, type = "b", pch = 19, 
+     xlab = "Number of Clusters", 
+     ylab = "WSS",
+     main = "Elbow Method")
+dev.off() # Closes the file writing pipeline
+
+# -------------------------------------------------------------
+# 2. SAVE GAP STATISTIC PLOT
+# -------------------------------------------------------------
+png("plot_gap_statistic.png", width = 800, height = 600, res = 120)
+plot(gap_stat, main = "Gap Statistic for Cape Town Airbnb Listings")
+dev.off()
+
+# -------------------------------------------------------------
+# 3. SAVE SILHOUETTE PLOT
+# -------------------------------------------------------------
+png("plot_silhouette_method.png", width = 800, height = 600, res = 120)
+plot(1:15, sil_width, type = "b", pch = 19, frame = FALSE, 
+     xlab = "Number of clusters K",
+     ylab = "Average Silhouette Width",
+     main = "Silhouette Method for K-means")
+abline(v = which.max(sil_width), lty = 2, col = "red")
+dev.off()
+```
+
+\subsubsection{DBScan:}
+
+```{r message=FALSE, warning=FALSE}
+results <- expand.grid(eps = seq(0.2, 0.6, by = 0.1), minPts = c(6, 15, 25))
+
+sink("dbscan_grid_search_results.txt") 
+
+apply(results, 1, function(row) {
+  res <- dbscan::dbscan(DB_data, eps = row[1], minPts = row[2])
+  
+  n_clusters <- max(res$cluster)
+  noise_pct <- sum(res$cluster == 0) / nrow(DB_data) * 100
+  
+  cat("Eps:", row[1], "| MinPts:", row[2], "| Clusters:", n_clusters, "| Noise:", round(noise_pct, 1), "%\n")
+})
+
+sink() 
+
+db_final <- dbscan::dbscan(DB_data, eps = 0.2, minPts = 15) 
+final_data$db_cluster <- as.factor(db_final$cluster)
+
+# SAVING THE FINAL MODEL:
+save(db_final, DB_data, file = "dbscan_results_eps0.2.RData")
+
+write.csv(as.data.frame(table(final_data$db_cluster)), "dbscan_cluster_counts.csv", row.names = FALSE)
+
+p_spatial_map <- ggplot(final_data, aes(x = Longitude, y = Latitude, color = db_cluster)) +
+  geom_point(alpha = 0.5, size = 0.8) +
+  scale_color_viridis_d(option = "turbo") + 
+  theme_minimal() +
+  labs(
+    title = "Optimized DBSCAN: 9 Market Segments",
+    subtitle = "Eps = 0.2, MinPts = 15 | Noise (0) = 10%",
+    color = "Cluster ID"
+  ) +
+  theme(
+    plot.title = element_text(face = "bold", size = 13),
+    plot.subtitle = element_text(face = "italic", color = "dimgray")
+  )
+
+ggsave("plot_dbscan_9_segments.png", plot = p_spatial_map, width = 8, height = 6.5, dpi = 300)
+
+cat("\n[Success] Text logs and spatial plots successfully stored in your environment workspace!\n")
+```
+
+
+\subsubsection{CLARA}
 ```{r message=FALSE, warning=FALSE}
 clara_vars <- FA_data %>%
   mutate(across(everything(), ~ {
@@ -246,6 +433,7 @@ clara_fn <- function(x, k) {
   )
 }
 
+# ELBOW METHOD:
 set.seed(123)
 p_wss <- fviz_nbclust(
   clara_vars,
@@ -257,6 +445,7 @@ p_wss <- fviz_nbclust(
   labs(title = "Elbow method — WSS", subtitle = "CLARA · Manhattan distance") +
   theme_minimal()
 
+# sILHOUETTE SCORE METHOD:
 set.seed(123)
 p_sil <- fviz_nbclust(
   clara_vars,
@@ -268,21 +457,41 @@ p_sil <- fviz_nbclust(
   labs(title = "Silhouette method", subtitle = "CLARA · Manhattan distance") +
   theme_minimal()
 
+# APPLYING GAP STATISTIC:
+set.seed(123)
+stratified_sample_vars <- final_data %>%
+  group_by(Ward_Level) %>%
+  sample_frac(0.10) %>% # Taking 10% from each Ward
+  ungroup() %>%
+  select(Reputation, Popularity, Scale_Price) %>%
+  mutate(across(everything(), ~ {
+    x <- .x
+    x <- sign(x) * log1p(abs(x))
+    as.numeric(scale(x))
+  }))
+
 set.seed(123)
 gap_result <- clusGap(
-  clara_vars,
+  stratified_sample_vars,
   FUNcluster = clara_fn,
   K.max      = 8,
-  B          = 50,
+  B          = 20, 
   verbose    = FALSE
 )
+
+# SAVE THE GAP RESULTS:
+save(gap_result, file = "Gap_Statistic_Results.RData")
 
 p_gap <- fviz_gap_stat(
   gap_result,
   maxSE = list(method = "firstSEmax", SE.factor = 1)
 ) +
-  labs(title = "Gap statistic", subtitle = "CLARA · Manhattan distance · B = 50") +
+  labs(title = "Gap Statistic — Stratified Sample", 
+       subtitle = "10% sample per Ward | B = 30") +
   theme_minimal()
+
+# SAVE P_GAP RESULTS:
+save(p_gap, file = "Gap_Stat_Plot.RData")
 
 print(p_wss)
 print(p_sil)
@@ -326,13 +535,13 @@ clara_final <- clara(
   rngR     = TRUE
 )
 
-final_data$cluster <- as.factor(clara_final$clustering)
+cluster_data$cluster <- as.factor(clara_final$clustering)
 
-cluster_profiles <- final_data %>%
+cluster_profiles <- cluster_data %>%
   group_by(cluster) %>%
   summarise(
     n              = n(),
-    pct            = round(n() / nrow(final_data) * 100, 1),
+    pct            = round(n() / nrow(cluster_data) * 100, 1),
     Reputation_med = round(median(Reputation, na.rm = TRUE), 3),
     Popularity_med = round(median(Popularity, na.rm = TRUE), 3),
     Price_med      = round(median(Scale_Price, na.rm = TRUE), 3),
@@ -342,7 +551,7 @@ cluster_profiles <- final_data %>%
 print(cluster_profiles)
 
 medoid_idx      <- clara_final$i.med
-medoid_listings <- final_data[medoid_idx, ]
+medoid_listings <- cluster_data[medoid_idx, ]
 print(medoid_listings)
 
 fviz_cluster(
@@ -355,9 +564,33 @@ fviz_cluster(
   main         = paste("CLARA —", k_final, "clusters (Manhattan)")
 )
 
+# SAVING THE FINAL MODEL:
+save(clara_final, clara_vars, k_final, file = "CLARA_Final_Model.RData")
+
+
 fviz_silhouette(clara_final) +
   theme_minimal() +
   labs(title = "Silhouette plot — CLARA final model")
+
+# -------------------------------------------------------------
+# SAVE NUMERICAL OBJECTS & TABLES
+# -------------------------------------------------------------
+
+# Save data-frame containing the final cluster profiles
+write.csv(cluster_profiles, "clara_cluster_profiles.csv", row.names = FALSE)
+
+# Save the exact medoid listings
+write.csv(medoid_listings, "clara_medoid_listings.csv", row.names = FALSE)
+
+# Save the complex R model structures 
+save(
+  k_wss, k_sil, k_gap, k_final,   
+  gap_result,                     
+  clara_final,                    
+  cluster_profiles,               
+  medoid_listings,                
+  file = "clara_clustering_results.RData"
+)
 ```
 
 
